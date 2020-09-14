@@ -38,15 +38,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "interface/mmal/mmal_parameters_camera.h"
 
-#include <ccrtp/rtp.h>
+//#include <ccrtp/rtp.h>
 
 struct RASPICOMMONSETTINGS_PARAMETERS {
-  char camera_name[MMAL_PARAMETER_CAMERA_INFO_MAX_STR_LEN] = {'(','U','k','n','o','w','n',')','\0'}; // Name of the camera sensor
+  char camera_name[MMAL_PARAMETER_CAMERA_INFO_MAX_STR_LEN] = "(Unknown)"; // Name of the camera sensor
   int width = 1920;                   /// Requested width of image
   int height = 1080;                  /// requested height of image
-  ost::InetHostAddress address{"192.168.16.122"};    /// output address
-  ost::tpport_t port = ost::DefaultRTPDataPort;  /// output port
-  ost::tpport_t control_port = 0;                /// output port
+  char const *address = "192.168.16.122";  /// output address
+  int port = 5004;                         /// output port
   int cameraNum = 0;                  /// Camera number
   int sensor_mode = 0;                /// Sensor mode. 0=auto. Check docs/forum for modes selected by other values.
   int verbose = 0;                    /// !0 if want detailed run information

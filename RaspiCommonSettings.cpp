@@ -95,7 +95,7 @@ static int cmdline_commands_size = sizeof(cmdline_commands) / sizeof(cmdline_com
  */
 void raspicommonsettings_dump_parameters(RASPICOMMONSETTINGS_PARAMETERS *state) {
    fprintf(stderr, "Camera Name %s\n", state->camera_name);
-   fprintf(stderr, "Width %d, Height %d, address %s\n", state->width, state->height, state->address.getHostname());
+   fprintf(stderr, "Width %d, Height %d, address %s\n", state->width, state->height, state->address);
    fprintf(stderr, "Using camera %d, sensor mode %d\n\n", state->cameraNum, state->sensor_mode);
 };
 
@@ -151,7 +151,7 @@ int raspicommonsettings_parse_cmdline(RASPICOMMONSETTINGS_PARAMETERS *state, con
    case CommandOutput:  // output address
    {
       if (strlen(arg2)) {
-         state->address = ost::InetMcastAddress{arg2};
+         state->address = arg2;
          used = 2;
       } else {
          used = 0;
