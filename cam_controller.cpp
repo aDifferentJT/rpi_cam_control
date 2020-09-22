@@ -46,51 +46,38 @@ int main(int argc, char **argv) {
   auto pipeline = gst_pipeline_new("my-pipeline");
 
   // create elements
-  auto appsrc = gst_element_factory_make("appsrc", "appsrc");
-  if (!appsrc) { g_warning("Failed to create appsrc"); }
-
-  auto raspicam = RaspiCam
-    { [&] (auto buffer, auto length) {
-        auto gst_buffer = gst_buffer_new_allocate(nullptr, length, nullptr);
-        auto map_info = GstMapInfo{};
-        gst_buffer_map(gst_buffer, &map_info, GST_MAP_WRITE);
-        memcpy(map_info.data, buffer, length);
-        gst_app_src_push_buffer(GST_APP_SRC(appsrc), gst_buffer);
-      }
-    };
-
-  GstAppSrcCallbacks callbacks =
-    { &need_data
-    , &enough_data
-    , nullptr // seek_data
-    };
-
-  gst_app_src_set_stream_type(GST_APP_SRC(appsrc), GST_APP_STREAM_TYPE_STREAM);
-  gst_app_src_set_callbacks
-    ( GST_APP_SRC(appsrc)
-    , &callbacks
-    , nullptr
-    , nullptr //GDestroyNotify notify
-    );
-
-  auto h264parse = gst_element_factory_make("h264parse", "h264parse");
-  if (!h264parse) { g_warning("Failed to create h264parse"); }
+  auto rpicamsrc = gst_element_factory_make("rpicamsrc", "rpicamsrc");
+  if (!rpicamsrc) { g_warning("Failed to create rpicamsrc"); }
+  {
+    GValue preview = G_VALUE_INIT;
+    g_value_init(&preview, G_TYPE_BOOLEAN);
+    g_value_set_boolean(&preview, false);
+    g_object_set_property(G_OBJECT(rpicamsrc), "preview", &preview);
+  }
 
   auto rtph264pay = gst_element_factory_make("rtph264pay", "rtph264pay");
   if (!rtph264pay) { g_warning("Failed to create rtph264pay"); }
-  auto rtph264pay_src = gst_element_get_static_pad (rtph264pay, "src");
-
-  auto rtpbin = gst_element_factory_make("rtpbin", "rtpbin");
-  if (!rtpbin) { g_warning("Failed to create rtpbin"); }
-  auto send_rtp_sink_0 = gst_element_get_request_pad(rtpbin, "send_rtp_sink_0");
-  if (!send_rtp_sink_0) { g_warning("Failed to create send_rtp_sink_0"); }
+  {
+    GValue send_config = G_VALUE_INIT;
+    g_value_init(&send_config, G_TYPE_BOOLEAN);
+    g_value_set_boolean(&send_config, TRUE);
+    g_object_set_property(G_OBJECT(rtph264pay), "send-config", &send_config);
+    GValue config_interval = G_VALUE_INIT;
+    g_value_init(&config_interval, G_TYPE_INT);
+    g_value_set_int(&config_interval, -1);
+    g_object_set_property(G_OBJECT(rtph264pay), "config-interval", &config_interval);
+    GValue pt = G_VALUE_INIT;
+    g_value_init(&pt, G_TYPE_INT);
+    g_value_set_int(&pt, 98);
+    g_object_set_property(G_OBJECT(rtph264pay), "pt", &pt);
+  }
 
   auto udpsink = gst_element_factory_make("udpsink", "udpsink");
   if (!udpsink) { g_warning("Failed to create udpsink"); }
   {
     GValue host = G_VALUE_INIT;
     g_value_init(&host, G_TYPE_STRING);
-    g_value_set_string(&host, "192.168.16.84");
+    g_value_set_string(&host, "192.168.16.152");
     g_object_set_property(G_OBJECT(udpsink), "host", &host);
     GValue port = G_VALUE_INIT;
     g_value_init(&port, G_TYPE_INT);
@@ -99,22 +86,24 @@ int main(int argc, char **argv) {
   }
 
   /* must add elements to pipeline before linking them */
-  gst_bin_add_many(GST_BIN(pipeline), appsrc, h264parse, rtph264pay, rtpbin, udpsink, NULL);
+  gst_bin_add_many(GST_BIN(pipeline), rpicamsrc, rtph264pay, udpsink, NULL);
+
+  auto caps = gst_caps_new_simple
+    ( "video/x-h264"
+    //, "format", G_TYPE_STRING, "I420"
+    , "width", G_TYPE_INT, 1280
+    , "height", G_TYPE_INT, 720
+    , "framerate", GST_TYPE_FRACTION, 30, 1
+    , NULL
+    );
 
   /* link */
-  if (!gst_element_link(appsrc, h264parse)) { g_warning ("Failed to link appsrc to h264parse"); }
-  if (!gst_element_link(h264parse, rtph264pay)) { g_warning ("Failed to link h264parse to rtph264pay"); }
-  if (gst_pad_link(rtph264pay_src, send_rtp_sink_0) != GST_PAD_LINK_OK) { g_warning ("Failed to link rtph264pay to rtpbin"); }
-  if (!gst_element_link_pads(rtpbin, "send_rtp_src_0", udpsink, "sink")) { g_warning ("Failed to link rtpbin to udpsink"); }
+  if (!gst_element_link_filtered(rpicamsrc, rtph264pay, caps)) { g_warning ("Failed to link rpicamsrc to rtph264pay"); }
+  if (!gst_element_link(rtph264pay, udpsink)) { g_warning ("Failed to link rtph264pay to udpsink"); }
 
   if (!gst_element_set_state(pipeline, GST_STATE_PLAYING)) { g_warning("Failed to start pipeline"); }
 
-  GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline");
-
   // Iterate
-  g_print("Starting...\n");
-  raspicam.start();
-
   g_print("Running...\n");
   g_main_loop_run(loop);
 
