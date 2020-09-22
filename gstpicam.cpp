@@ -30,52 +30,7 @@
 GST_DEBUG_CATEGORY_STATIC (gst_pi_cam_debug_category);
 #define GST_CAT_DEFAULT gst_pi_cam_debug_category
 
-// MMAL functions
 
-static void mmal_return_buffer_to_port(MMAL_PORT_T *port, MMAL_QUEUE_T *queue) {
-  if (!port->is_enabled) {
-    return;
-  }
-  
-  auto new_buffer = mmal_queue_get(queue);
-   
-  if (!new_buffer) {
-    vcos_log_error("Unable to return a buffer to the encoder port");
-    return;
-  }
-  
-  if (mmal_port_send_buffer(port, new_buffer) != MMAL_SUCCESS) {
-    vcos_log_error("Unable to return a buffer to the encoder port");
-    return;
-  }
-}
-
-static void mmal_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *mmal_buffer) {
-  GstPiCam *picam = GST_PI_CAM(port->userdata);
-
-  auto raiiBufferRelease = gsl::finally([&] () {
-    mmal_buffer_header_release(mmal_buffer);
-    mmal_return_buffer_to_port(port, picam->encoder_pool->queue);
-  });
-
-  if (!mmal_buffer->length) { return; }
-
-  mmal_buffer_header_mem_lock(mmal_buffer);
-  auto unlock_buffer = gsl::finally([&] () { mmal_buffer_header_mem_unlock(mmal_buffer); });
-
-  if (mmal_buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO) { return; }
-
-  auto gst_buffer = gst_buffer_new_allocate(nullptr, mmal_buffer->length, nullptr);
-  auto map_info = GstMapInfo{};
-  gst_buffer_map(gst_buffer, &map_info, GST_MAP_WRITE);
-  memcpy(map_info.data, mmal_buffer->data, mmal_buffer->length);
-
-  {
-    auto queueLock = std::unique_lock{picam->queueMutex};
-    picam->queue.push(gst_buffer);
-  }
-  picam->queueNotEmpty.notify_one();
-}
 
 
 /* prototypes */
@@ -110,52 +65,6 @@ G_DEFINE_TYPE_WITH_CODE
 
 // Constructor
 
-static void gst_pi_cam_init(GstPiCam *picam) {
-  new(picam) GstPiCam;
-
-  gst_base_src_set_live(GST_BASE_SRC_CAST(picam), TRUE);
-
-  bcm_host_init();
-
-  picam->camera_component = raspicam::create_camera_component(picam);
-  if (!picam->camera_component) { g_warning("no camera component"); }
-
-  {
-    auto [component, pool] = raspicam::create_encoder_component(picam);
-    picam->encoder_component = component;
-    picam->encoder_pool = pool;
-
-    if (!picam->encoder_component) { g_warning("no encoder component"); }
-    if (!picam->encoder_pool) { g_warning("no encoder pool"); }
-  }
-
-  picam->camera_video_port = picam->camera_component->output[MMAL_CAMERA_VIDEO_PORT];
-  picam->encoder_input_port = picam->encoder_component->input[0];
-  picam->encoder_output_port = picam->encoder_component->output[0];
-
-  if (!picam->camera_video_port) { g_warning("no camera video port"); }
-  if (!picam->encoder_input_port) { g_warning("no encoder input port"); }
-  if (!picam->encoder_output_port) { g_warning("no encoder output port"); }
-
-  picam->encoder_connection = raspicam::connect_ports(picam->camera_video_port, picam->encoder_input_port);
-  if (!picam->encoder_connection) { g_warning("no encoder connection"); }
-
-  picam->encoder_output_port->userdata = reinterpret_cast<MMAL_PORT_USERDATA_T*>(picam);
-
-  mmal_port_enable(picam->encoder_output_port, mmal_encoder_buffer_callback);
-
-  for (int q = 0; q < mmal_queue_length(picam->encoder_pool->queue); q++) {
-    auto buffer = mmal_queue_get(picam->encoder_pool->queue);
-
-    if (!buffer) {
-      vcos_log_error("Unable to get a required buffer %d from pool queue", q);
-    }
-
-    if (mmal_port_send_buffer(picam->encoder_output_port, buffer) != MMAL_SUCCESS) {
-      vcos_log_error("Unable to send a buffer to encoder output port (%d)", q);
-    }
-  }
-}
 
 // GObject virtual methods
 
@@ -206,20 +115,6 @@ void gst_pi_cam_finalize (GObject *object) {
 // GstBaseSrc virtual methods
 
 /* start and stop processing, ideal for opening/closing the resource */
-static gboolean gst_pi_cam_start (GstBaseSrc *src) {
-  GstPiCam *picam = GST_PI_CAM (src);
-  GST_DEBUG_OBJECT (picam, "start");
-
-  g_warning("starting");
-
-  if (mmal_port_parameter_set_boolean(picam->camera_video_port, MMAL_PARAMETER_CAPTURE, 1) != MMAL_SUCCESS) {
-    g_warning("Could not start capturing");
-  }
-
-  gst_base_src_start_complete(src, GST_FLOW_OK);
-
-  return TRUE;
-}
 
 static gboolean gst_pi_cam_stop (GstBaseSrc *src) {
   GstPiCam *picam = GST_PI_CAM (src);
